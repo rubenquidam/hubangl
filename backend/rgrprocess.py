@@ -34,8 +34,6 @@ from gi.repository import Gtk
 
 import iofetch
 
-Gst.init() # -->[DEBUG]<--
-
 # Dict keys: 
 CUR_ELEM = 'cur_elem'
 NEW_ELEM = 'new_elem'
@@ -48,12 +46,6 @@ VIDEO_IN = 'video_in'
 VIDEO_OUT = 'video_out' 
 index_audio = 1
 index_video = 1
-
-all_audio_src = iofetch.find_audio() # -->[DEBUG]<--
-all_video_src = iofetch.find_usbcam() # -->[DEBUG]<--
-
-##print('\n-+-+-+- AUDIO SRC in rgrprocess -+-+-+-\n', all_audio_src) # -->[DEBUG]<--
-##print('\n-+-+-+- VIDEO SRC in rgrprocess -+-+-+-\n', all_video_src) # -->[DEBUG]<--
 
     
 def choose_audiosrc_elem(device, devname, *pargs, **kargs):
@@ -134,20 +126,13 @@ def create_inputs_elem(*pargs, **kargs):
             if devices[name][iofetch.CLASS] == iofetch.CLASS_AUDIO:
                 audiosrc = choose_audiosrc_elem(devices[name], name,)
                 if audiosrc: # [DEBUG]
-                    ##print('GST ELEMENT:', audiosrc) # [DEBUG]
-                    ##print('DEVICE NAME:', name) # [DEBUG]
                     print('DEVICE INFO:', devices[name]) # [DEBUG]
-                    ##print('DEVICE CLASS:', devices[name][iofetch.CLASS]) # [DEBUG]
             elif devices[name][iofetch.CLASS] == iofetch.CLASS_VIDEO:
                 videosrc = choose_videosrc_elem(devices[name], name,)
                 if videosrc: # [DEBUG]
-                    ##print('GST ELEMENT:', videosrc) # [DEBUG]
-                    ##print('DEVICE NAME:', name) # [DEBUG]
                     print('DEVICE INFO:', devices[name]) # [DEBUG]
-                    ##print('DEVICE CLASS:', devices[name][iofetch.CLASS]) # [DEBUG]
 ##    return audiosrc, videosrc
 
-#create_inputs_elem(all_audio_src,all_video_src)
 
 def create_formats_elem(*pargs, **kargs):
     pass
@@ -191,12 +176,9 @@ def event_probe_cb(pad, info, user_data):
     info_event = info_pad.get_event()
     
     if (info_event is None) or (info_event.type != Gst.EventType.EOS):
-#        print('[DEBUG] IN CONDTIONNAL STATEMENT')
         return Gst.PadProbeReturn.PASS
-#    else: print('[DEBUG] EVENT IS EOS')
 
     Gst.Pad.remove_probe(pad, info_pad.id)
-#    print('[DEBUG] PAD REMOVED')
 
     # Getting element context:
     elem_after = get_connected_elem(pad) # In v1.0 'pad' is most likely a srcpad:
@@ -230,7 +212,6 @@ def pad_probe_cb(pad, info, user_data):
     Gst.Pad.remove_probe(pad, info.id)
 
     # Install new probe for EOS
-#    cur_elem = user_data[0] # -->[DEBUG]<--
     cur_elem = user_data[CUR_ELEM]
     srcpad = Gst.Element.get_static_pad(cur_elem, 'src')
     Gst.Pad.add_probe(srcpad,
@@ -256,51 +237,65 @@ def compare_formats(*pargs, **kargs):
     pass
 
 
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#  *** TEST BIN ***
-# -----------------------------------------------------------------
-class Testapp():
+def pipeline_tester():
+    """
+    Tests pipeline with default settings
+    when module is launched as standalone.
+    """
+    all_audio_src = iofetch.find_audio()
+    all_video_src = iofetch.find_usbcam()
+##    user_audio = select_device(all_audio_src)
 
-    def __init__(self):
-        self.win = Gtk.Window()
-        self.win.connect("delete_event",
-                         lambda w,e: Gtk.main_quit())
-        self.win.show_all()
+    Gst.init()
+
+    class Testapp():
         
-    rproc = Gst.Pipeline()
-    #rproc = Gst.ElementFactory.make('bin', 'process_bin')
-    #rproc.set_state(Gst.State.NULL)
-    
-    testsrc = Gst.ElementFactory.make('videotestsrc', 'videosrc_1')
-    rproc.add(testsrc)
+        def __init__(self):
+            self.win = Gtk.Window()
+            self.win.connect("delete_event",
+                             lambda w,e: Gtk.main_quit())
+            self.win.show_all()
+        
+        rproc = Gst.Pipeline()
+        #rproc.set_state(Gst.State.NULL)
 
-    testsrc2 = Gst.ElementFactory.make('v4l2src', 'videosrc_2')
-    testsrc2.set_property('device', '/dev/video0')
+        # Video section
+        video_testsrc = Gst.ElementFactory.make('videotestsrc', 'videosrc_1')
+        rproc.add(video_testsrc)
 
-    videoconv = Gst.ElementFactory.make('videoconvert', 'conv')
-    rproc.add(videoconv)
-    testsrc.link(videoconv)
+        video_testsrc2 = Gst.ElementFactory.make('v4l2src', 'videosrc_2')
+        video_testsrc2.set_property('device', '/dev/video0')
 
-    screen = Gst.ElementFactory.make('xvimagesink', 'screensink')
-    rproc.add(screen)
-    videoconv.link(screen)
+        videoconv = Gst.ElementFactory.make('videoconvert', 'conv')
+        rproc.add(videoconv)
+        video_testsrc.link(videoconv)
 
-    rproc.set_state(Gst.State.PLAYING)
+        screen = Gst.ElementFactory.make('xvimagesink', 'screensink')
+        rproc.add(screen)
+        videoconv.link(screen)
 
-    time.sleep(1) # -->[DEBUG]<--
-    print ('SLEEP FINISHED') # -->[DEBUG]<--
-    #--------------------------------------------------------------------
-    # HAS TO BE IMPLEMENTED PROPERLY
-    #-------------------------------
-    blockpad = testsrc.get_static_pad('src')
-    user_data = {CUR_ELEM : testsrc, NEW_ELEM : testsrc2, CUR_BIN : rproc}
-    #--------------------------------------------------------------------
-    Gst.Pad.add_probe(blockpad,
-                      Gst.PadProbeType.BLOCK_DOWNSTREAM,
-                      pad_probe_cb,
-                      user_data,)
-    
+        # Audio section
+        audio_src = Gst.ElementFactory.make('pulsesrc', 'audiosrc')
+##        audio_src.set_property('device', user_audio)
 
-Testapp()
-Gtk.main()
+        rproc.set_state(Gst.State.PLAYING)
 
+        time.sleep(1) # -->[DEBUG]<--
+        print ('SLEEP FINISHED') # -->[DEBUG]<--
+        #--------------------------------------------------------------------
+        # HAS TO BE IMPLEMENTED PROPERLY
+        #-------------------------------
+        blockpad = video_testsrc.get_static_pad('src')
+        user_data = {CUR_ELEM : video_testsrc,
+                     NEW_ELEM : video_testsrc2,
+                     CUR_BIN : rproc}
+        #--------------------------------------------------------------------
+        Gst.Pad.add_probe(blockpad,
+                          Gst.PadProbeType.BLOCK_DOWNSTREAM,
+                          pad_probe_cb,
+                          user_data,)    
+    Testapp()
+    Gtk.main()
+
+if __name__ == '__main__':
+    pipeline_tester()
