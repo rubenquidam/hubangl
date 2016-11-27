@@ -147,14 +147,7 @@ class Pipeline:
              self.video_muxer_source)
         print("AV INIT...\tDONE")  # DEBUG
 
-        self.audio_sources = ()
-        self.video_sources = ()
-        self.stream_sinks = ()
-        self.store_sinks = ()
-
         self.build_pipeline(self.pipeline,
-                            self.audio_sources,  # DEBUG use ??
-                            self.video_sources,  # DEBUG use ??
                             self.audio_process_source,
                             self.audio_process_branch1,
                             self.audio_process_branch2,
@@ -164,9 +157,7 @@ class Pipeline:
                             self.video_process_branch3,
                             self.av_process_branch1,
                             self.av_process_branch2,
-                            self.av_process_branch3,  # FAIL
-                            self.stream_sinks,  # DEBUG use ??
-                            self.store_sinks)  # DEBUG use ??
+                            self.av_process_branch3)  # FAIL WITH FAKESINK ONLY (may work with a queue before it)
         print("BUILDING...\tDONE")  # DEBUG
 
     def set_play_state(self):
@@ -182,7 +173,7 @@ class Pipeline:
         """
         self.pipeline.set_state(Gst.State.NULL)
 
-    def is_standingby(self):
+    def is_standing_by(self):
         """
         Check if pipeline instance is in the right state to perform
         major change on a Gstreamer element.
@@ -191,41 +182,41 @@ class Pipeline:
         Return True if change(s) can be made on Gst element.
         """
 
-    def update_gstelement(self, gstelement, update_type, update_value):
+    def update_gstelement(self, gstelement, parameter, update_value):
         assert self.is_standingby()
 
         if not (isinstance(ioelements.InputElement)
                 or isinstance(ioelements.OutputElement)):
             return
 
-        possible_update = ["device",
-                           "location",
-                           "path",
-                           "ip",
-                           "port",
-                           "mount",
-                           "password"]
-        if update_type in possible_update:
-            gstelement.change_settings(update_type, update_value)
+        valid_parameters = ["device",
+                            "location",
+                            "path",
+                            "ip",
+                            "port",
+                            "mount",
+                            "password"]
+        if parameter in valid_parameters:
+            gstelement.change_settings(parameter, update_value)
         self.set_play_state()
 
     def get_blockpad(self, gstelement, pad_type="src"):
         return gstelement.get_static_pad(pad_type)
 
-    def add_probe(pad, user_data, pad_probe_type=None):
+    def add_probe(self, pad, user_data, pad_probe_type=None):
         if not pad_probe_type:
             pad_probe_type = Gst.PadProbType.BLOCK_DOWNSTREAM
         return Gst.Pad.add_probe(pad,
                                  pad_probe_type,
-                                 # self.pad_probe_cb,
+                                 self.pad_probe_cb,
                                  user_data)
 
     def get_connected_element(self, pad):
         """
-        Gets element connected to 'pad' in order to handle
+        Gets element connected to ``pad`` in order to handle
         easily an element unlinking.
 
-        Returns Gst.Element if there's any, None otherwise.
+        :return: Gst.Element if there's any, None otherwise.
         """
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         #  NOTE : May not work on 'tee' element,
@@ -254,7 +245,7 @@ class Pipeline:
         Gst.Pad.remove_probe(pad, info_pad.id)
 
         # Getting element context:
-        element_after = self.get_connected_element(pad)  # In v1.0 "pad" is most likely a srcpad
+        element_after = self.get_connected_element(pad)
         current_element = pad.get_parent()
         sinkpad = current_element.get_static_pad("sink")
         element_before = self.get_connected_element(sinkpad)
@@ -268,9 +259,11 @@ class Pipeline:
         current_bin.remove(current_element)
         current_bin.add(new_element)
         if element_before:
-            element_before.link(new_element)  # (doesn't apply for input feed)
+            # It doesn't apply for audio/video input
+            element_before.link(new_element)
         if element_after:
-            new_element.link(element_after)  # (doesn't apply for screensink, filesink)
+            # It doesn't apply for output sink
+            new_element.link(element_after)
 
         # Not sure about setting new_element in PLAYING state
         # Maybe call set_play_state
@@ -282,8 +275,8 @@ class Pipeline:
         """
         Callback for blocking data flow between 2 or 3 elements.
         """
-        BLOCK_PRB = Gst.PadProbeType.BLOCK
-        EVENT_DOWNSTREAM_PRB = Gst.PadProbeType.EVENT_DOWNSTREAM
+        BLOCK_PROBE = Gst.PadProbeType.BLOCK
+        EVENT_DOWNSTREAM_PROBE = Gst.PadProbeType.EVENT_DOWNSTREAM
 
         # Remove the probe first
         Gst.Pad.remove_probe(pad, info.id)
@@ -292,7 +285,7 @@ class Pipeline:
         current_element = user_data[CUR_ELEM]
         srcpad = Gst.Element.get_static_pad(current_element, "src")
         Gst.Pad.add_probe(srcpad,
-                          BLOCK_PRB or EVENT_DOWNSTREAM_PRB,
+                          BLOCK_PROBE or EVENT_DOWNSTREAM_PROBE,
                           self.event_probe_cb,
                           user_data,)
 
@@ -302,7 +295,7 @@ class Pipeline:
         if sinkpad:
             Gst.Pad.send_event(sinkpad, Gst.Event.new_eos())
         else:
-            # In case of input change
+            # In case of audio/video input change
             current_element.send_event(Gst.Event.new_eos())
 
         return Gst.PadProbeReturn.OK
@@ -357,7 +350,6 @@ class Pipeline:
         tee_elements = []
         tee_input_elements = []
         tee_output_elements = []
-        previous_item = None
 
         for branche in branches:
             for item in branche:
@@ -372,7 +364,7 @@ class Pipeline:
 
         for tee in tee_elements:
             self.print_gst("TEE", 0, tee)  # DEBUG
-            # Definig the tee input
+            # Definig tee input
             for element in tee_input_elements:
                 if element.related_tee.name == tee.name:
                     _input_element = element
@@ -380,7 +372,7 @@ class Pipeline:
                     break
 
             _output_elements = []
-            # Definig the tee output(s)
+            # Definig tee output(s)
             for element in tee_output_elements:
                 if element.related_tee.name == tee.name:
                     _output_elements.append(element)
@@ -396,16 +388,6 @@ class Pipeline:
 
             self.connect_tee(tee, _input_element, *_output_elements)
 
-    def make_queue(self, tee_element):
-        """
-        Create ``queue`` GStreamer element used for ###########################################################################################################################################################################################################################
-
-        :param tee_element: endpoint ``tee`` element
-
-        :return: ``queue`` GStramer element
-        """
-        queue_name = "queue" + str(self.fakesink_counter)
-        return queue
     def make_fakesink(self, tee_element, pipeline):
         """
         Create ``fakesink`` GStreamer element as a placeholder for an endpoint
@@ -424,6 +406,9 @@ class Pipeline:
         :param pipeline: GStreamer ``pipeline`` element
 
         :return: ``fakesink`` GStramer element
+
+        :note: ``webmmux`` GStreamer element doesn't support use of fakesink
+            in the current configuration
         """
         fakesink_name = "fakesink" + str(self.fakesink_counter)
         self.fakesink_counter += 1
@@ -486,7 +471,7 @@ class Pipeline:
     def print_gst(self, msg, indent, *elements):
         """
         Debugging function.
-        Print the name of each element.
+        Print the name of each element and displays it as tree.
         """
         indent_str = "\t" * indent
         print(msg)
@@ -513,11 +498,18 @@ class Pipeline:
         else:
             raise NotAudioVideoSource
 
-    def set_output_sink(self, sink_element):
+    def change_input_source(self, current_input, new_input):
+        """
+        Change audio/video input of the pipeline dynamically.
+        """
+        self.add_probe(BLAH BLAH)
+
+    def set_output_sink(self, sink_element, endpoint_tee):
         """
         Add a streaming/storing sink to the pipeline.
 
         :param sink_element: stream/store Gstreamer element to add
+        :param endpoint_tee: endpoint ``tee`` that ``sink_element`` is related to.
         """
         sink_gstelement = sink_element.gstelement
 
@@ -531,14 +523,17 @@ class Pipeline:
             # EGGS
             # 3- Ajouter les élements dans le pipeline :
             self.add_elements(self.pipeline, (sink_gstelement,))
-            # Trouver un moyen de linker les éléments par rapport à la branche
-            # Audio ? Video ? Audio-Video ? (passer l'élement à raccorder
-            # en argument?) :
-            sink_gstelement.link(self.SPAMEGGSHAM)
+            endpoint_tee.link(sink_element)
         elif isinstance(sink_element, ioelements.StreamElement):
             pass
         else:
             NotStoreStreamSink
+
+    def change_output_sink(self, current_sink, new_sink):
+        """
+        Change stream/store output sink of the pipeline dynamically.
+        """
+        pass
 
     def create_audio_process(self,):
         """
@@ -735,7 +730,8 @@ def on_message(self, bus, message):
         self.streampipe.set_state(Gst.State.NULL)
     elif t == Gst.MessageType.ERROR:
         err, debug = message.parse_error()
-        print (ERROR, '%s' % err, debug)
+        print("ERROR", '%s' % err, debug)
+
 
 if __name__ == "__main__":
     # basic unittest for debbuging Pipeline class
